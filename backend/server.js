@@ -3,6 +3,7 @@ const cors = require("cors");
 require("dotenv").config();
 
 const pool = require("./config/db");
+const authRoutes = require("./routes/authRoutes");
 
 const app = express();
 
@@ -10,12 +11,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Test API route
-app.get("/", (req, res) => {
-    res.json({
-        message: "JobTrack API is running successfully!"
-    });
-});
+// Authentication routes
+app.use("/api/auth", authRoutes);
 
 // Test database connection
 app.get("/api/test-db", async (req, res) => {
