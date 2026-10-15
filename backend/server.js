@@ -1,46 +1,25 @@
-const express = require("express");
-const cors = require("cors");
-require("dotenv").config();
+const net = require("net");
 
-const pool = require("./config/db");
-const authRoutes = require("./routes/authRoutes");
-const applicationRoutes = require("./routes/applicationRoutes");
-const interviewRoutes = require("./routes/interviewRoutes");
+app.get("/api/test-network", (req, res) => {
+    const socket = net.createConnection({
+        host: process.env.DB_HOST,
+        port: Number(process.env.DB_PORT)
+    });
 
-const app = express();
+    socket.setTimeout(8000);
 
-app.use(cors());
-app.use(express.json());
+    socket.on("connect", () => {
+        socket.destroy();
+        res.json({ success: true, message: "Network connection successful" });
+    });
 
-// Authentication routes
-app.use("/api/auth", authRoutes);
+    socket.on("timeout", () => {
+        socket.destroy();
+        res.status(504).json({ success: false, message: "Network connection timed out" });
+    });
 
-// Job application routes
-app.use("/api/applications", applicationRoutes);
-
-// Interview routes
-app.use("/api/interviews", interviewRoutes);
-
-// Test database connection
-app.get("/api/test-db", async (req, res) => {
-    try {
-        const [result] = await pool.query("SELECT 1 AS test");
-
-        res.json({
-            message: "Database connected successfully!",
-            result
-        });
-    } catch (error) {
-        console.error("Database connection error:", error);
-
-        res.status(500).json({
-            message: "Database connection failed"
-        });
-    }
-});
-
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-    console.log(`JobTrack server is running on port ${PORT}`);
+    socket.on("error", (err) => {
+        socket.destroy();
+        res.status(500).json({ success: false, message: err.code });
+    });
 });
