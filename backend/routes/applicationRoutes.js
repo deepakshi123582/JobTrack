@@ -4,14 +4,18 @@ const {
     createApplication,
     getApplications,
     updateApplication,
-    deleteApplication
+    deleteApplication,
+    getApplicationStats
 } = require("../controllers/applicationController");
 
 const authMiddleware = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// Add a new application
+// Get dashboard statistics
+router.get("/stats", authMiddleware, getApplicationStats);
+
+// Create a new application
 router.post("/", authMiddleware, createApplication);
 
 // Get all applications

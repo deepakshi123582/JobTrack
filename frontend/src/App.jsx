@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+} from "recharts";
 import "./App.css";
 
 const API_URL = "http://localhost:5000/api";
@@ -15,6 +22,17 @@ const getEmptyForm = () => ({
   job_link: "",
   notes: "",
 });
+
+// Small client-side helpers to prevent blank/invalid values.
+const isValidUrl = (value) => {
+  if (!value.trim()) return true; // Job link is optional.
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
 
 function App() {
   const [isLogin, setIsLogin] = useState(true);
@@ -41,6 +59,15 @@ function App() {
   const [applications, setApplications] = useState([]);
   const [applicationsLoading, setApplicationsLoading] = useState(false);
 
+  const [dashboardStats, setDashboardStats] = useState({
+    totalApplications: 0,
+    applied: 0,
+    interviews: 0,
+    offers: 0,
+  });
+
+  const [statsLoading, setStatsLoading] = useState(false);
+
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(getEmptyForm);
@@ -51,7 +78,20 @@ function App() {
 
   const [activePage, setActivePage] = useState("Dashboard");
 
-  // Search and status filter
+  // Interview scheduling state
+  const [interviews, setInterviews] = useState([]);
+  const [interviewsLoading, setInterviewsLoading] = useState(false);
+  const [savingInterview, setSavingInterview] = useState(false);
+  const [interviewMessage, setInterviewMessage] = useState("");
+  const [interviewMessageType, setInterviewMessageType] = useState("");
+  const [interviewForm, setInterviewForm] = useState({
+    application_id: "",
+    interview_date: "",
+    interview_type: "Technical",
+    interviewer: "",
+    notes: "",
+  });
+
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
@@ -70,6 +110,13 @@ function App() {
       setUser(null);
       setIsLoggedIn(false);
       setApplications([]);
+
+      setDashboardStats({
+        totalApplications: 0,
+        applied: 0,
+        interviews: 0,
+        offers: 0,
+      });
 
       setMessage("Your session expired. Please log in again.");
       setMessageType("error");
@@ -104,9 +151,213 @@ function App() {
     }
   };
 
+  // Fetch scheduled interviews from the backend
+  const fetchInterviews = async () => {
+    setInterviewsLoading(true);
+
+    try {
+      const response = await axios.get(`${API_URL}/interviews`, getAuthConfig());
+      setInterviews(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      if (!handleAuthError(error)) {
+        setInterviewMessage(
+          error.response?.data?.message || "Could not load interviews. Please try again."
+        );
+        setInterviewMessageType("error");
+      }
+    } finally {
+      setInterviewsLoading(false);
+    }
+  };
+
+  // Schedule a new interview
+  const handleInterviewSubmit = async (event) => {
+    event.preventDefault();
+    setInterviewMessage("");
+    setInterviewMessageType("");
+
+    if (!interviewForm.application_id) {
+      setInterviewMessage("Please select a job application.");
+      setInterviewMessageType("error");
+      return;
+    }
+    if (!interviewForm.interview_date || Number.isNaN(new Date(interviewForm.interview_date).getTime())) {
+      setInterviewMessage("Please enter a valid interview date and time.");
+      setInterviewMessageType("error");
+      return;
+    }
+
+    setSavingInterview(true);
+    try {
+      await axios.post(
+        `${API_URL}/interviews`,
+        {
+          ...interviewForm,
+          application_id: Number(interviewForm.application_id),
+          interview_date: interviewForm.interview_date.replace("T", " "),
+        },
+        getAuthConfig()
+      );
+
+      setInterviewMessage("Interview scheduled successfully!");
+      setInterviewMessageType("success");
+      setInterviewForm({
+        application_id: "",
+        interview_date: "",
+        interview_type: "Technical",
+        interviewer: "",
+        notes: "",
+      });
+
+      await Promise.all([fetchInterviews(), fetchDashboardStats()]);
+    } catch (error) {
+      if (!handleAuthError(error)) {
+        setInterviewMessage(
+          error.response?.data?.message || "Could not schedule interview. Please try again."
+        );
+        setInterviewMessageType("error");
+      }
+    } finally {
+      setSavingInterview(false);
+    }
+  };
+
+
+  // Update interview status from the Interviews table
+  const handleInterviewStatusChange = async (interview, status) => {
+    try {
+      await axios.put(
+        `${API_URL}/interviews/${interview.id}`,
+        { status },
+        getAuthConfig()
+      );
+      setInterviewMessage("Interview status updated successfully!");
+      setInterviewMessageType("success");
+      await fetchInterviews();
+    } catch (error) {
+      if (!handleAuthError(error)) {
+        setInterviewMessage(
+          error.response?.data?.message || "Could not update interview status."
+        );
+        setInterviewMessageType("error");
+      }
+    }
+  };
+
+  // Edit interview details using simple prompts
+  const handleEditInterview = async (interview) => {
+    const currentDate = interview.interview_date
+      ? String(interview.interview_date).replace("T", " ").slice(0, 16)
+      : "";
+    const interviewDate = window.prompt(
+      "Interview date and time (YYYY-MM-DD HH:mm):",
+      currentDate
+    );
+    if (interviewDate === null) return;
+    if (!interviewDate.trim() || Number.isNaN(new Date(interviewDate.trim().replace(" ", "T")).getTime())) {
+      setInterviewMessage("Please enter a valid date and time, for example 2026-10-20 14:30.");
+      setInterviewMessageType("error");
+      return;
+    }
+
+    const interviewType = window.prompt(
+      "Interview type:",
+      interview.interview_type || "Technical"
+    );
+    if (interviewType === null) return;
+
+    const interviewer = window.prompt(
+      "Interviewer / contact:",
+      interview.interviewer || ""
+    );
+    if (interviewer === null) return;
+
+    const notes = window.prompt("Preparation notes:", interview.notes || "");
+    if (notes === null) return;
+
+    try {
+      await axios.put(
+        `${API_URL}/interviews/${interview.id}`,
+        {
+          interview_date: interviewDate.trim().replace("T", " "),
+          interview_type: interviewType.trim() || null,
+          interviewer: interviewer.trim() || null,
+          notes: notes.trim() || null,
+        },
+        getAuthConfig()
+      );
+      setInterviewMessage("Interview updated successfully!");
+      setInterviewMessageType("success");
+      await fetchInterviews();
+    } catch (error) {
+      if (!handleAuthError(error)) {
+        setInterviewMessage(
+          error.response?.data?.message || "Could not update interview."
+        );
+        setInterviewMessageType("error");
+      }
+    }
+  };
+
+  // Delete an interview
+  const handleDeleteInterview = async (interview) => {
+    const confirmed = window.confirm(
+      `Delete the interview for ${interview.company} — ${interview.job_title}?`
+    );
+    if (!confirmed) return;
+
+    try {
+      await axios.delete(`${API_URL}/interviews/${interview.id}`, getAuthConfig());
+      setInterviewMessage("Interview deleted successfully!");
+      setInterviewMessageType("success");
+      await fetchInterviews();
+      await fetchDashboardStats();
+    } catch (error) {
+      if (!handleAuthError(error)) {
+        setInterviewMessage(
+          error.response?.data?.message || "Could not delete interview."
+        );
+        setInterviewMessageType("error");
+      }
+    }
+  };
+
+  // Fetch dashboard statistics from the backend
+  const fetchDashboardStats = async () => {
+    setStatsLoading(true);
+
+    try {
+      const response = await axios.get(
+        `${APPLICATIONS_URL}/stats`,
+        getAuthConfig()
+      );
+
+      const stats = response.data.stats || {};
+
+      setDashboardStats({
+        totalApplications: Number(stats.totalApplications || 0),
+        applied: Number(stats.applied || 0),
+        interviews: Number(stats.interviews || 0),
+        offers: Number(stats.offers || 0),
+      });
+    } catch (error) {
+      if (!handleAuthError(error)) {
+        console.error(
+          "Could not load dashboard statistics:",
+          error.response?.data?.message || error.message
+        );
+      }
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  // Load applications and statistics when logged in
   useEffect(() => {
     if (isLoggedIn) {
       fetchApplications();
+      fetchDashboardStats();
+      fetchInterviews();
     }
   }, [isLoggedIn]);
 
@@ -116,12 +367,30 @@ function App() {
 
     setMessage("");
     setMessageType("");
+
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      setMessage("Please enter your email address.");
+      setMessageType("error");
+      return;
+    }
+    if (!isLogin && name.trim().length < 2) {
+      setMessage("Please enter a name with at least 2 characters.");
+      setMessageType("error");
+      return;
+    }
+    if (password.length < 6) {
+      setMessage("Password must be at least 6 characters long.");
+      setMessageType("error");
+      return;
+    }
+
     setLoading(true);
 
     try {
       if (isLogin) {
         const response = await axios.post(`${API_URL}/auth/login`, {
-          email,
+          email: cleanEmail,
           password,
         });
 
@@ -138,8 +407,8 @@ function App() {
         setPassword("");
       } else {
         await axios.post(`${API_URL}/auth/register`, {
-          name,
-          email,
+          name: name.trim(),
+          email: cleanEmail,
           password,
         });
 
@@ -176,6 +445,16 @@ function App() {
     setPassword("");
 
     setApplications([]);
+    setInterviews([]);
+    setInterviewMessage("");
+    setInterviewMessageType("");
+    setDashboardStats({
+      totalApplications: 0,
+      applied: 0,
+      interviews: 0,
+      offers: 0,
+    });
+
     setShowForm(false);
     setEditingId(null);
     setForm(getEmptyForm());
@@ -247,12 +526,30 @@ function App() {
   const handleApplicationSubmit = async (event) => {
     event.preventDefault();
 
-    setSavingApplication(true);
     setFormMessage("");
     setFormMessageType("");
 
+    const company = form.company.trim();
+    const jobTitle = form.job_title.trim();
+    if (!company || !jobTitle) {
+      setFormMessage("Company name and job title are required.");
+      setFormMessageType("error");
+      return;
+    }
+    if (!isValidUrl(form.job_link)) {
+      setFormMessage("Please enter a valid job link starting with http:// or https://.");
+      setFormMessageType("error");
+      return;
+    }
+
+    setSavingApplication(true);
     const payload = {
       ...form,
+      company,
+      job_title: jobTitle,
+      location: form.location.trim(),
+      job_link: form.job_link.trim(),
+      notes: form.notes.trim(),
       application_date: form.application_date || null,
     };
 
@@ -281,7 +578,10 @@ function App() {
       setShowForm(false);
       setActivePage("Applications");
 
-      await fetchApplications();
+      await Promise.all([
+        fetchApplications(),
+        fetchDashboardStats(),
+      ]);
     } catch (error) {
       if (!handleAuthError(error)) {
         setFormMessage(
@@ -323,7 +623,10 @@ function App() {
         setForm(getEmptyForm());
       }
 
-      await fetchApplications();
+      await Promise.all([
+        fetchApplications(),
+        fetchDashboardStats(),
+      ]);
     } catch (error) {
       if (!handleAuthError(error)) {
         setFormMessage(
@@ -370,20 +673,50 @@ function App() {
     return matchesSearch && matchesStatus;
   });
 
-  // Dashboard statistics
-  const totalApplications = applications.length;
+  const totalApplications = dashboardStats.totalApplications;
+  const appliedCount = dashboardStats.applied;
+  const interviewCount = dashboardStats.interviews;
+  const offerCount = dashboardStats.offers;
 
-  const appliedCount = applications.filter(
-    (application) => application.status === "Applied"
-  ).length;
+  // Build chart data from the applications returned by the backend.
+  const normalizedStatuses = applications.map((application) =>
+    String(application.status || "Applied").trim().toLowerCase()
+  );
 
-  const interviewCount = applications.filter((application) =>
-    ["Interview", "Interview Scheduled"].includes(application.status)
-  ).length;
-
-  const offerCount = applications.filter((application) =>
-    ["Offer", "Offered"].includes(application.status)
-  ).length;
+  const chartData = [
+    {
+      name: "Applied",
+      value: normalizedStatuses.filter((status) => status === "applied").length,
+      color: "#6366f1",
+    },
+    {
+      name: "Interviews",
+      value: normalizedStatuses.filter((status) => status.includes("interview")).length,
+      color: "#f59e0b",
+    },
+    {
+      name: "Offers",
+      value: normalizedStatuses.filter((status) =>
+        ["offer", "offered", "selected"].includes(status)
+      ).length,
+      color: "#10b981",
+    },
+    {
+      name: "Rejected",
+      value: normalizedStatuses.filter((status) => status === "rejected").length,
+      color: "#ef4444",
+    },
+    {
+      name: "Other statuses",
+      value: normalizedStatuses.filter(
+        (status) =>
+          status !== "applied" &&
+          !status.includes("interview") &&
+          !["offer", "offered", "selected", "rejected"].includes(status)
+      ).length,
+      color: "#94a3b8",
+    },
+  ].filter((item) => item.value > 0);
 
   // Dashboard
   if (isLoggedIn) {
@@ -660,7 +993,9 @@ function App() {
                     <span>Total Applications</span>
                     <span className="stat-icon purple">▤</span>
                   </div>
-                  <strong>{totalApplications}</strong>
+                  <strong>
+                    {statsLoading ? "..." : totalApplications}
+                  </strong>
                   <p>All tracked job applications</p>
                 </div>
 
@@ -669,7 +1004,9 @@ function App() {
                     <span>Applied</span>
                     <span className="stat-icon blue">↗</span>
                   </div>
-                  <strong>{appliedCount}</strong>
+                  <strong>
+                    {statsLoading ? "..." : appliedCount}
+                  </strong>
                   <p>Applications submitted</p>
                 </div>
 
@@ -678,7 +1015,9 @@ function App() {
                     <span>Interviews</span>
                     <span className="stat-icon orange">◷</span>
                   </div>
-                  <strong>{interviewCount}</strong>
+                  <strong>
+                    {statsLoading ? "..." : interviewCount}
+                  </strong>
                   <p>Interview opportunities</p>
                 </div>
 
@@ -687,7 +1026,9 @@ function App() {
                     <span>Offers</span>
                     <span className="stat-icon green">✓</span>
                   </div>
-                  <strong>{offerCount}</strong>
+                  <strong>
+                    {statsLoading ? "..." : offerCount}
+                  </strong>
                   <p>Offers received</p>
                 </div>
               </section>
@@ -754,9 +1095,7 @@ function App() {
                                 : "—"}
                             </td>
                             <td>
-                              <span
-                                className={getStatusClass(application.status)}
-                              >
+                              <span className={getStatusClass(application.status)}>
                                 {application.status}
                               </span>
                             </td>
@@ -764,6 +1103,71 @@ function App() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </section>
+
+              {/* Application Status Chart */}
+              <section className="applications-panel chart-panel">
+                <div className="panel-header">
+                  <div>
+                    <h2>Application Status</h2>
+                    <p>See how your job search is progressing.</p>
+                  </div>
+                </div>
+
+                {applicationsLoading ? (
+                  <div className="empty-state">Loading chart...</div>
+                ) : chartData.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-icon">◔</div>
+                    <h3>No application data yet</h3>
+                    <p>Add a job application to see your status breakdown.</p>
+                  </div>
+                ) : (
+                  <div
+                    className="status-chart-layout"
+                    style={{
+                      display: "grid",
+                      alignItems: "center",
+                      gap: "24px",
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <div className="status-chart" style={{ width: "100%", height: 220, minWidth: 0, position: "relative" }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={chartData}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={52}
+                            outerRadius={82}
+                            paddingAngle={3}
+                          >
+                            {chartData.map((entry) => (
+                              <Cell key={entry.name} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="status-summary" style={{ display: "flex", flexDirection: "column", gap: "14px", padding: "8px 12px" }}>
+                      {chartData.map((entry) => (
+                        <div key={entry.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "9px", minWidth: 0 }}>
+                            <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
+                            <span style={{ color: "#77798d", fontSize: "13px" }}>{entry.name}</span>
+                          </div>
+                          <strong style={{ color: "#292a40", fontSize: "15px" }}>{entry.value}</strong>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </section>
@@ -785,17 +1189,23 @@ function App() {
                 <button
                   className="secondary-button"
                   type="button"
-                  onClick={fetchApplications}
-                  disabled={applicationsLoading}
+                  onClick={() => {
+                    fetchApplications();
+                    fetchDashboardStats();
+                  }}
+                  disabled={applicationsLoading || statsLoading}
                 >
-                  {applicationsLoading ? "Refreshing..." : "Refresh"}
+                  {applicationsLoading || statsLoading
+                    ? "Refreshing..."
+                    : "Refresh"}
                 </button>
               </div>
 
-              {/* Search and filter controls */}
               <div className="application-filters">
                 <div className="form-group search-group">
-                  <label htmlFor="application-search">Search applications</label>
+                  <label htmlFor="application-search">
+                    Search applications
+                  </label>
                   <input
                     id="application-search"
                     type="search"
@@ -854,7 +1264,7 @@ function App() {
                   <p>
                     {applications.length === 0
                       ? "Your saved job applications will appear here."
-                      : "Try a different search term or clear your filters."}
+                      : "Try changing your search or clearing the filters."}
                   </p>
 
                   {applications.length === 0 && (
@@ -946,65 +1356,245 @@ function App() {
 
           {/* Interviews Page */}
           {!showForm && activePage === "Interviews" && (
-            <section className="applications-panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Interviews</h2>
-                  <p>
-                    View applications that have reached the interview stage.
-                  </p>
+            <>
+              <section className="applications-panel">
+                <div className="panel-header">
+                  <div>
+                    <h2>Schedule an Interview</h2>
+                    <p>Add interview details for one of your tracked job applications.</p>
+                  </div>
                 </div>
-              </div>
 
-              {applications.filter((application) =>
-                ["Interview", "Interview Scheduled"].includes(application.status)
-              ).length === 0 ? (
-                <div className="empty-state">
-                  <div className="empty-icon">▣</div>
-                  <h3>No interviews tracked yet</h3>
-                  <p>
-                    Update an application status to Interview or Interview
-                    Scheduled to see it here.
-                  </p>
+                {interviewMessage && (
+                  <div className={`message ${interviewMessageType}`} role="status">
+                    {interviewMessage}
+                  </div>
+                )}
+
+                {applications.length === 0 ? (
+                  <div className="empty-state">
+                    <h3>Add a job application first</h3>
+                    <p>You need a saved application before scheduling an interview.</p>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={openApplicationForm}
+                    >
+                      + Add Application
+                    </button>
+                  </div>
+                ) : (
+                  <form className="application-form" onSubmit={handleInterviewSubmit}>
+                    <div className="form-grid">
+                      <div className="form-group full-width">
+                        <label htmlFor="interview-application">Job Application *</label>
+                        <select
+                          id="interview-application"
+                          value={interviewForm.application_id}
+                          onChange={(event) =>
+                            setInterviewForm((previous) => ({
+                              ...previous,
+                              application_id: event.target.value,
+                            }))
+                          }
+                          required
+                        >
+                          <option value="">Select a company and role</option>
+                          {applications.map((application) => (
+                            <option key={application.id} value={application.id}>
+                              {application.company} — {application.job_title}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="form-group">
+                        <label htmlFor="interview-date">Interview Date &amp; Time *</label>
+                        <input
+                          id="interview-date"
+                          type="datetime-local"
+                          value={interviewForm.interview_date}
+                          onChange={(event) =>
+                            setInterviewForm((previous) => ({
+                              ...previous,
+                              interview_date: event.target.value,
+                            }))
+                          }
+                          required
+                        />
+                      </div>
+
+                      <div className="form-group">
+                        <label htmlFor="interview-type">Interview Type</label>
+                        <select
+                          id="interview-type"
+                          value={interviewForm.interview_type}
+                          onChange={(event) =>
+                            setInterviewForm((previous) => ({
+                              ...previous,
+                              interview_type: event.target.value,
+                            }))
+                          }
+                        >
+                          <option>Technical</option>
+                          <option>HR</option>
+                          <option>Behavioral</option>
+                          <option>Online Assessment</option>
+                          <option>Phone Screen</option>
+                          <option>Other</option>
+                        </select>
+                      </div>
+
+                      <div className="form-group full-width">
+                        <label htmlFor="interviewer">Interviewer / Contact</label>
+                        <input
+                          id="interviewer"
+                          value={interviewForm.interviewer}
+                          onChange={(event) =>
+                            setInterviewForm((previous) => ({
+                              ...previous,
+                              interviewer: event.target.value,
+                            }))
+                          }
+                          placeholder="e.g. Hiring Manager"
+                        />
+                      </div>
+
+                      <div className="form-group full-width">
+                        <label htmlFor="interview-notes">Preparation Notes</label>
+                        <textarea
+                          id="interview-notes"
+                          rows="3"
+                          value={interviewForm.notes}
+                          onChange={(event) =>
+                            setInterviewForm((previous) => ({
+                              ...previous,
+                              notes: event.target.value,
+                            }))
+                          }
+                          placeholder="Topics to prepare, meeting link, reminders..."
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => {
+                          setInterviewForm({
+                            application_id: "",
+                            interview_date: "",
+                            interview_type: "Technical",
+                            interviewer: "",
+                            notes: "",
+                          });
+                          setInterviewMessage("");
+                          setInterviewMessageType("");
+                        }}
+                        disabled={savingInterview}
+                      >
+                        Clear
+                      </button>
+                      <button className="primary-button" type="submit" disabled={savingInterview}>
+                        {savingInterview ? "Scheduling..." : "Schedule Interview"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </section>
+
+              <section className="applications-panel">
+                <div className="panel-header">
+                  <div>
+                    <h2>Scheduled Interviews</h2>
+                    <p>Your upcoming and previous interview details.</p>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={fetchInterviews}
+                    disabled={interviewsLoading}
+                  >
+                    {interviewsLoading ? "Refreshing..." : "Refresh"}
+                  </button>
                 </div>
-              ) : (
-                <div className="table-wrapper">
-                  <table className="applications-table">
-                    <thead>
-                      <tr>
-                        <th>Company</th>
-                        <th>Job Title</th>
-                        <th>Location</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
 
-                    <tbody>
-                      {applications
-                        .filter((application) =>
-                          ["Interview", "Interview Scheduled"].includes(
-                            application.status
-                          )
-                        )
-                        .map((application) => (
-                          <tr key={application.id}>
-                            <td className="company-cell">
-                              {application.company}
-                            </td>
-                            <td>{application.job_title}</td>
-                            <td>{application.location || "—"}</td>
+                {interviewsLoading ? (
+                  <div className="empty-state">Loading interviews...</div>
+                ) : interviews.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-icon">▣</div>
+                    <h3>No interviews scheduled yet</h3>
+                    <p>Use the form above to add your first interview.</p>
+                  </div>
+                ) : (
+                  <div className="table-wrapper">
+                    <table className="applications-table">
+                      <thead>
+                        <tr>
+                          <th>Company</th>
+                          <th>Job Title</th>
+                          <th>Date &amp; Time</th>
+                          <th>Type</th>
+                          <th>Interviewer</th>
+                          <th>Notes</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {interviews.map((interview) => (
+                          <tr key={interview.id}>
+                            <td className="company-cell">{interview.company}</td>
+                            <td>{interview.job_title}</td>
                             <td>
-                              <span className={getStatusClass(application.status)}>
-                                {application.status}
-                              </span>
+                              {interview.interview_date
+                                ? new Date(String(interview.interview_date).replace(" ", "T")).toLocaleString()
+                                : "—"}
+                            </td>
+                            <td>{interview.interview_type || "—"}</td>
+                            <td>{interview.interviewer || "—"}</td>
+                            <td>{interview.notes || "—"}</td>
+                            <td>
+                              <select
+                                aria-label={`Status for ${interview.company} interview`}
+                                value={interview.status || "Scheduled"}
+                                onChange={(event) =>
+                                  handleInterviewStatusChange(interview, event.target.value)
+                                }
+                              >
+                                <option value="Scheduled">Scheduled</option>
+                                <option value="Completed">Completed</option>
+                                <option value="Cancelled">Cancelled</option>
+                              </select>
+                            </td>
+                            <td>
+                              <div className="application-actions">
+                                <button
+                                  className="edit-button"
+                                  type="button"
+                                  onClick={() => handleEditInterview(interview)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  className="delete-button"
+                                  type="button"
+                                  onClick={() => handleDeleteInterview(interview)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </>
           )}
 
           <footer className="dashboard-footer">

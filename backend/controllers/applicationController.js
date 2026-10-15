@@ -142,7 +142,9 @@ const updateApplication = async (req, res) => {
 
         // Check that the application belongs to this user.
         const [existingApplications] = await pool.query(
-            "SELECT id FROM applications WHERE id = ? AND user_id = ?",
+            `SELECT id
+             FROM applications
+             WHERE id = ? AND user_id = ?`,
             [applicationId, userId]
         );
 
@@ -227,11 +229,80 @@ const deleteApplication = async (req, res) => {
 
 
 // ==========================================
+// 5. GET DASHBOARD APPLICATION STATISTICS
+// ==========================================
+const getApplicationStats = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const [stats] = await pool.query(
+            `SELECT
+                COUNT(*) AS totalApplications,
+
+                SUM(
+                    CASE
+                        WHEN LOWER(status) = 'applied'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS applied,
+
+                SUM(
+                    CASE
+                        WHEN LOWER(status) LIKE '%interview%'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS interviews,
+
+                SUM(
+                    CASE
+                        WHEN LOWER(status) IN (
+                            'offer',
+                            'offered',
+                            'selected'
+                        )
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS offers
+
+             FROM applications
+             WHERE user_id = ?`,
+            [userId]
+        );
+
+        return res.status(200).json({
+            stats: {
+                totalApplications: Number(
+                    stats[0].totalApplications
+                ),
+                applied: Number(stats[0].applied),
+                interviews: Number(stats[0].interviews),
+                offers: Number(stats[0].offers)
+            }
+        });
+
+    } catch (error) {
+        console.error(
+            "Get application statistics error:",
+            error
+        );
+
+        return res.status(500).json({
+            message: "Unable to fetch application statistics."
+        });
+    }
+};
+
+
+// ==========================================
 // EXPORT ALL FUNCTIONS
 // ==========================================
 module.exports = {
     createApplication,
     getApplications,
     updateApplication,
-    deleteApplication
+    deleteApplication,
+    getApplicationStats
 };

@@ -5,6 +5,7 @@ require("dotenv").config();
 const pool = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const applicationRoutes = require("./routes/applicationRoutes");
+const interviewRoutes = require("./routes/interviewRoutes");
 
 const app = express();
 
@@ -16,6 +17,9 @@ app.use("/api/auth", authRoutes);
 
 // Job application routes
 app.use("/api/applications", applicationRoutes);
+
+// Interview routes
+app.use("/api/interviews", interviewRoutes);
 
 // Test database connection
 app.get("/api/test-db", async (req, res) => {

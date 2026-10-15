@@ -1148,3 +1148,112 @@ textarea:focus-visible {
     animation-iteration-count: 1 !important;
   }
 }
+
+
+/* =========================
+   DASHBOARD OVERFLOW FIX
+   ========================= */
+
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.dashboard {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.dashboard-main {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: calc(100% - 250px);
+  min-width: 0;
+}
+
+.stats-grid,
+.applications-panel,
+.dashboard-header {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 1200px) {
+  .dashboard-main {
+    max-width: calc(100% - 250px);
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard-main {
+    max-width: calc(100% - 200px);
+  }
+}
+
+@media (max-width: 520px) {
+  .dashboard-main {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* Application status chart: compact, responsive layout */
+.status-chart-layout {
+  grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.8fr);
+}
+
+@media (max-width: 760px) {
+  .status-chart-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 8px !important;
+  }
+
+  .status-chart {
+    height: 220px !important;
+  }
+
+  .status-summary {
+    padding: 8px 4px !important;
+  }
+}
+
+
+/* Ensure the Application Status chart remains visible and compact */
+.chart-panel {
+  min-height: 0;
+  padding-bottom: 24px;
+}
+
+.status-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.7fr);
+  align-items: center;
+  gap: 20px;
+  min-height: 0;
+}
+
+.status-chart {
+  width: 100%;
+  height: 220px !important;
+  min-width: 0;
+}
+
+.status-summary {
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .status-chart-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 8px !important;
+  }
+
+  .status-chart {
+    height: 190px !important;
+  }
+}
